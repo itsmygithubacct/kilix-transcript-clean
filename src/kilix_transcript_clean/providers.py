@@ -159,6 +159,12 @@ class Claude(Provider):
     )
     _rule = re.compile(r"^─{10,}")
     _prompt = re.compile(r"^❯")
+    # Shown above the prompt while the person scrolls back through history.
+    _back = re.compile(r"(?:Jump to bottom|new messages?) \(ctrl\+End\) ↓")
+
+    def browsing(self, lines: list[str]) -> bool:
+        return any(self._back.search(line) for line in lines[_bottom(lines, 8):])
+
     _spinner = re.compile(r"^(?:[·✢✳✶✻✽✺*] \S|\s+⎿\s+Tip: )")
 
     def footer_start(self, lines: list[str]) -> int:

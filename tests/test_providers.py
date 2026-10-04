@@ -91,6 +91,13 @@ class Regions(unittest.TestCase):
         self.assertTrue(codex.browsing(["text", "", "    ↓ Back to bottom · esc"]))
         self.assertFalse(codex.browsing(CODEX))
 
+    def test_claude_history_browsing(self):
+        claude = provider_named("claude")
+        for marker in ("Jump to bottom (ctrl+End) ↓", "1 new message (ctrl+End) ↓", "3 new messages (ctrl+End) ↓"):
+            with self.subTest(marker):
+                self.assertTrue(claude.browsing(CLAUDE[:3] + ["   " + marker] + CLAUDE[5:]))
+        self.assertFalse(claude.browsing(CLAUDE))
+
     def test_claude_drops_prompt_box_and_spinner(self):
         body, top = provider_named("claude").content(CLAUDE)
         self.assertEqual((top, body), (0, CLAUDE[:3]))
