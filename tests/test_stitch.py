@@ -19,6 +19,22 @@ class ShellOutput(unittest.TestCase):
         data = ("\r\n".join(lines) + "\r\n").encode()
         self.assertEqual(body(clean_bytes(data, rows=10)), lines)
 
+    def test_screen_cleared_without_a_frame_is_kept(self):
+        # A shell `clear`: no synchronized update, no quiet stretch, then gone.
+        data = b"$ make\r\nbuilt ok\r\n$ clear\r\n\x1b[H\x1b[2J$ ls\r\nREADME\r\n"
+        self.assertEqual(body(clean_bytes(data, rows=10)),
+                         ["$ make", "built ok", "$ clear", "$ ls", "README"])
+
+    def test_plain_text_without_carriage_returns(self):
+        lines = ["first", "  indented", "last"]
+        self.assertEqual(body(clean_bytes("\n".join(lines).encode() + b"\n", rows=2)), lines)
+
+    def test_line_feed_alone_only_moves_down_in_terminal_output(self):
+        # With CRs present the recording is terminal output, where LF keeps
+        # the column: raw-mode programs rely on it.
+        result = clean_bytes(b"ab\r\ncd\nef\r\n", rows=5)
+        self.assertEqual(body(result), ["ab", "cd", "  ef"])
+
     def test_progress_redrawn_with_carriage_return_keeps_final_state(self):
         data = b"start\r\n" + b"".join(b"\r%3d%%" % i for i in range(0, 101, 10)) + b"\r\ndone\r\n"
         self.assertEqual(body(clean_bytes(data, rows=5)), ["start", "100%", "done"])

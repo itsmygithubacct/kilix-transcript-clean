@@ -140,8 +140,11 @@ def clean_bytes(data: bytes, rows: int | None = None, provider: str | None = Non
             titles.append(title)
 
     stitcher = Stitcher(provider)
+    # A PTY turns every line feed a program writes into CR LF, so a recording
+    # with no carriage return at all was never terminal output: plain text.
     screen = Screen(rows or start_rows, cols, on_frame=stitcher.on_frame,
-                    on_scroll=stitcher.on_scroll, on_title=on_title, warm=not rotated)
+                    on_scroll=stitcher.on_scroll, on_title=on_title, warm=not rotated,
+                    newline_returns=b"\r" not in data)
     screen.feed(data)
     screen.finish()
     stitcher.finish()

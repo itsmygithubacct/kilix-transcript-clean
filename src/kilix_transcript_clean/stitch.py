@@ -206,11 +206,15 @@ class Stitcher:
         new = self._content(lines)
         before = self.pending[name]
         old = list(before.lines) if before else []
+        result = self._advance(name, *new)
         if why == "clear":
-            self._settle_limbo(name, old, [])
+            # Whatever the screen shows is about to be erased: it is final,
+            # even if no frame was taken since it was drawn (a shell `clear`).
+            self._settle_limbo(name, old, new[0])
+            if result is not None:
+                self.pending[name] = result
             self._flush(name)
             return
-        result = self._advance(name, *new)
         self._settle_limbo(name, old, new[0])
         if result is not None:
             self.pending[name] = result

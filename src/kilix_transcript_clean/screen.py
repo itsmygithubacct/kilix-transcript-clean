@@ -119,6 +119,7 @@ class Screen:
         on_title: Callable[[str], None] | None = None,
         idle_bytes: int = 4096,
         warm: bool = True,
+        newline_returns: bool = False,
     ) -> None:
         self.rows = max(2, rows)
         self.cols = max(2, cols)
@@ -142,6 +143,9 @@ class Screen:
         # contents are unknown. It is "warm" once most rows have been drawn
         # or the program cleared it; until then frames are only partial.
         self.warm = warm
+        # A line feed only moves down. Text written without a PTY (a plain log)
+        # has no carriage returns, and there a line feed starts a new line.
+        self.newline_returns = newline_returns
         self._touched: set[int] = set()
         self._scrolled_full = False
 
@@ -288,6 +292,8 @@ class Screen:
     def control(self, c: int) -> None:
         if c in (0x0A, 0x0B, 0x0C):
             self.linefeed()
+            if self.newline_returns:
+                self.x = 0
         elif c == 0x0D:
             self.x = 0
             self.wrap_pending = False
