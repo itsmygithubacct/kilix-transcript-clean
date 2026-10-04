@@ -25,6 +25,11 @@ class ShellOutput(unittest.TestCase):
         self.assertEqual(body(clean_bytes(data, rows=10)),
                          ["$ make", "built ok", "$ clear", "$ ls", "README"])
 
+    def test_identical_lines_are_all_kept(self):
+        lines = ["first"] + ["same output"] * 500 + ["last"]
+        data = ("\r\n".join(lines) + "\r\n").encode()
+        self.assertEqual(body(clean_bytes(data, rows=24)), lines)
+
     def test_plain_text_without_carriage_returns(self):
         lines = ["first", "  indented", "last"]
         self.assertEqual(body(clean_bytes("\n".join(lines).encode() + b"\n", rows=2)), lines)
@@ -132,6 +137,12 @@ class RecordedSize(unittest.TestCase):
         long = "x" * 50 + " end"
         data = self.record(5, 20) + f"$ echo\r\n{long}\r\n$ \r\n".encode()
         self.assertEqual(body(clean_bytes(data)), ["$ echo", long, "$"])
+
+    def test_space_at_the_wrap_point_is_kept(self):
+        data = self.record(4, 12) + b"hello world again\r\n" + b"x\r\n" * 6
+        self.assertEqual(body(clean_bytes(data))[0], "hello world again")
+        data = self.record(4, 12) + b"hello world again\r\n"
+        self.assertEqual(body(clean_bytes(data)), ["hello world again"])
 
     def test_wrapped_line_scrolling_off_the_top_is_rejoined(self):
         lines = [f"{i:02d}" + "y" * 30 for i in range(12)]

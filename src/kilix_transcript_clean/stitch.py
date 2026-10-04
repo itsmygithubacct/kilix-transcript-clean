@@ -103,7 +103,9 @@ class Stitcher:
         lines = pending.lines[pending.held:]
         while lines and not lines[-1].strip():
             lines.pop()
-        self._commit(screen, self._unseen(lines))
+        # Only a full-screen program repaints a conversation it already showed;
+        # the main screen's own history is tracked row by row instead.
+        self._commit(screen, self._unseen(lines) if screen == "alt" else lines)
         if boundary:
             self.floor = len(self.doc)
         self.pending[screen] = None
@@ -122,7 +124,7 @@ class Stitcher:
         if _nonblank(block) < 2 or not window:
             return block
         for k in range(min(len(block), len(window)), 1, -1):
-            if window[-k:] == block[:k] and _nonblank(block[:k]) >= 2:
+            if window[-k:] == block[:k] and len({line for line in block[:k] if line.strip()}) >= 2:
                 return block[k:]
         distinct = {line for line in block if line.strip()}
         if len(distinct) < 5:

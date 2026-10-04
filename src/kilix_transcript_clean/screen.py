@@ -153,15 +153,18 @@ class Screen:
     def _blank(self) -> list[Row]:
         return [Row() for _ in range(self.rows)]
 
-    def _text(self, row: Row, previous_full: bool) -> str:
-        text = "".join(row).rstrip()
+    def _text(self, row: Row, previous_full: bool, below: Row | None) -> str:
+        # A full row that continues below may end in a space the line needs.
+        continues = below is not None and below.wrapped and len(row) >= self.cols
+        text = "".join(row) if continues else "".join(row).rstrip()
         return CONTINUATION + text if row.wrapped and previous_full else text
 
     def lines(self) -> list[str]:
         # The top row may continue a line that has already scrolled away.
         out, full = [], self._scrolled_full
-        for row in self.grid:
-            out.append(self._text(row, full))
+        for i, row in enumerate(self.grid):
+            below = self.grid[i + 1] if i + 1 < len(self.grid) else None
+            out.append(self._text(row, full, below))
             full = len(row) >= self.cols
         return out
 
@@ -180,7 +183,7 @@ class Screen:
             self.dirty = True
             full = self._scrolled_full if above is None else len(above) >= self.cols
             self._scrolled_full = len(row) >= self.cols
-            self.on_scroll(self, self._text(row, full))
+            self.on_scroll(self, self._text(row, full, self.grid[self.top]))
 
     def scroll_down(self, n: int = 1) -> None:
         for _ in range(min(n, self.bottom - self.top + 1)):
