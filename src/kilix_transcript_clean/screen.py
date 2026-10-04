@@ -71,6 +71,13 @@ def parse_size_record(body: bytes) -> tuple[int, int, bool] | None:
     return rows, cols, fields.get("rotated") == "1"
 
 
+# Characters a terminal acts on or that reorder text, never shown as text:
+# C1 controls and the bidirectional embedding, override and isolate marks.
+# Keeping them would let a transcript display differently from what it says.
+_INVISIBLE = frozenset(chr(c) for c in range(0x80, 0xA0)) | frozenset(
+    "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u200e\u200f\u061c")
+
+
 def cell_width(ch: str) -> int:
     if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Me", "Cf"):
         return 0
@@ -199,6 +206,8 @@ class Screen:
                 self._known()
         row = self.grid[self.y]
         for ch in s:
+            if ch in _INVISIBLE:
+                continue
             w = cell_width(ch)
             if w == 0:
                 if self.x > 0 and self.x <= len(row):

@@ -45,6 +45,10 @@ class TextAndCursor(unittest.TestCase):
         screen, _ = replay("界x\r\né!".encode())
         self.assertEqual(screen.lines()[:2], ["界x", "é!"])
 
+    def test_c1_controls_and_bidi_marks_are_not_text(self):
+        screen, _ = replay("a\u009bb\u202ec\u2066d\u200de".encode())
+        self.assertEqual(screen.lines()[0], "abcd\u200de")
+
     def test_insert_and_delete_characters(self):
         screen, _ = replay(b"abcd\x1b[1;2H\x1b[2P\x1b[1;1H\x1b[1@")
         self.assertEqual(screen.lines()[0], " ad")
