@@ -115,7 +115,9 @@ fleet:
 | Grok | 6.4 MB | all within the recording |
 | omp | 4.2 MB | all |
 
-A 7 MB recording takes about 4–7 seconds.
+Replay reuses unchanged screen rows, batches ordinary text writes and caches
+repeated character widths and control sequences. These caches are bounded;
+each recording is still replayed in full, including its redraws and resizes.
 
 ## Limits
 

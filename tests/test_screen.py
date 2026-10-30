@@ -168,5 +168,56 @@ class Recording(unittest.TestCase):
         self.assertTrue(screen.warm)
 
 
+class ReplayCaching(unittest.TestCase):
+    def test_rendered_rows_follow_every_cell_edit(self):
+        screen = Screen(3, 20)
+        screen.feed(b"abcdef")
+        self.assertEqual(screen.lines()[0], "abcdef")
+        edits = (
+            (b"\x1b[1;2HX", "aXcdef"),
+            (b"\x1b[1;3H\x1b[2P", "aXef"),
+            (b"\x1b[1;2H\x1b[2@", "a  Xef"),
+            (b"\x1b[1;4H\x1b[2X", "a    f"),
+            (b"\x1b[1;3H\x1b[K", "a"),
+            (b"\x1b[2K", ""),
+            (b"\x1b[1;1Hok", "ok"),
+            (b"\x1b[2J", ""),
+        )
+        for sequence, expected in edits:
+            with self.subTest(sequence=sequence):
+                screen.feed(sequence)
+                self.assertEqual(screen.lines()[0], expected)
+
+    def test_cached_row_keeps_space_when_the_next_write_wraps(self):
+        screen = Screen(3, 4)
+        screen.feed(b"abc ")
+        self.assertEqual(screen.lines()[0], "abc")
+        screen.feed(b"d")
+        self.assertEqual(screen.lines()[:2], ["abc ", CONTINUATION + "d"])
+
+    def test_style_sequences_preserve_pending_wrap(self):
+        screen, _ = replay(b"abcd\x1b[38;2;1;2;3m\x1b[4:3m\x1b[>4;2me", cols=4)
+        self.assertEqual(screen.lines()[:2], ["abcd", CONTINUATION + "e"])
+
+    def test_ascii_runs_pad_gaps_and_overwrite_without_removing_suffix(self):
+        screen, _ = replay(b"abcdef\x1b[1;2HXY\x1b[1;9Hz", cols=12)
+        self.assertEqual(screen.lines()[0], "aXYdef  z")
+
+    def test_right_margin_with_autowrap_disabled(self):
+        screen, _ = replay(b"\x1b[?7labcdef\rXY", cols=4)
+        self.assertEqual(screen.lines()[:2], ["XYcf", ""])
+
+    def test_cached_row_tracks_combining_and_wide_character_edits(self):
+        screen = Screen(3, 8)
+        screen.feed(b"e")
+        self.assertEqual(screen.lines()[0], "e")
+        screen.feed("\u0301".encode())
+        self.assertEqual(screen.lines()[0], "e\u0301")
+        screen.feed("\r界".encode())
+        self.assertEqual(screen.lines()[0], "界")
+        screen.feed(b"\rZ")
+        self.assertEqual(screen.lines()[0], "Z")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from functools import lru_cache
 from typing import Callable
 
 # One token: a CSI, OSC, string sequence (DCS/APC/PM/SOS), other escape,
@@ -48,11 +49,24 @@ CONTINUATION = "\x00"
 class Row(list):
     """One screen row of cells, remembering whether it was reached by autowrap."""
 
-    __slots__ = ("wrapped",)
+    __slots__ = ("wrapped", "_text", "_trimmed")
 
     def __init__(self, cells=()):
         super().__init__(cells)
         self.wrapped = False
+        self._text: str | None = None
+        self._trimmed = ""
+
+    def invalidate(self) -> None:
+        self._text = None
+
+    def render(self, keep_trailing: bool) -> str:
+        # Most frames change only a few rows. Joining every cell of every
+        # unchanged row again dominates replay of status-heavy recordings.
+        if self._text is None:
+            self._text = "".join(self)
+            self._trimmed = self._text.rstrip()
+        return self._text if keep_trailing else self._trimmed
 
 
 def parse_size_record(body: bytes) -> tuple[int, int, bool] | None:
@@ -78,10 +92,25 @@ _INVISIBLE = frozenset(chr(c) for c in range(0x80, 0xA0)) | frozenset(
     "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u200e\u200f\u061c")
 
 
+@lru_cache(maxsize=4096)
 def cell_width(ch: str) -> int:
     if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Me", "Cf"):
         return 0
     return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def _parse_csi(t: bytes) -> tuple[str, tuple[int, ...]]:
+    body = t[2:-1].decode("latin-1")
+    marker = body[:1] if body[:1] in "?<>=" else ""
+    body = body[len(marker):].rstrip(" !\"#$%&'()*+,-./")
+    params = tuple(int(p) if p.isdigit() else 0
+                   for p in body.replace(":", ";").split(";")) if body else ()
+    return marker, params
+
+
+# Redraws repeat the same cursor positions and modes. Keep only short control
+# sequences, with immutable results and a fixed entry bound.
+_cached_csi = lru_cache(maxsize=1024)(_parse_csi)
 
 
 def looks_rotated(data: bytes, limit: int = 8 << 20) -> bool:
@@ -127,7 +156,7 @@ class Screen:
         self.on_scroll = on_scroll or (lambda screen, line: None)
         self.on_title = on_title or (lambda title: None)
         self.idle_bytes = idle_bytes
-        self.main: list[list[str]] = self._blank()
+        self.main: list[Row] = self._blank()
         self.grid = self.main
         self.in_alt = False
         self.y = self.x = 0
@@ -156,16 +185,17 @@ class Screen:
     def _text(self, row: Row, previous_full: bool, below: Row | None) -> str:
         # A full row that continues below may end in a space the line needs.
         continues = below is not None and below.wrapped and len(row) >= self.cols
-        text = "".join(row) if continues else "".join(row).rstrip()
+        text = row.render(continues)
         return CONTINUATION + text if row.wrapped and previous_full else text
 
     def lines(self) -> list[str]:
         # The top row may continue a line that has already scrolled away.
         out, full = [], self._scrolled_full
-        for i, row in enumerate(self.grid):
-            below = self.grid[i + 1] if i + 1 < len(self.grid) else None
-            out.append(self._text(row, full, below))
-            full = len(row) >= self.cols
+        for row, below in zip(self.grid, self.grid[1:] + [None]):
+            row_full = len(row) >= self.cols
+            text = row.render(row_full and below is not None and below.wrapped)
+            out.append(CONTINUATION + text if row.wrapped and full else text)
+            full = row_full
         return out
 
     def _frame(self, why: FrameReason) -> None:
@@ -212,42 +242,57 @@ class Screen:
             if len(self._touched) >= 0.6 * self.rows:
                 self._known()
         row = self.grid[self.y]
-        for ch in s:
-            if ch in _INVISIBLE:
-                continue
-            w = cell_width(ch)
-            if w == 0:
-                if self.x > 0 and self.x <= len(row):
-                    row[self.x - 1] += ch
-                continue
-            if self.wrap_pending or self.x + w > self.cols:
-                if self.autowrap:
-                    self.x = 0
-                    self.linefeed()
-                    row = self.grid[self.y]
-                    row.wrapped = True
-                else:
-                    self.x = self.cols - w
-                self.wrap_pending = False
-            if len(row) < self.x + w:
-                row.extend(" " * (self.x + w - len(row)))
-            row[self.x] = ch
-            if w == 2:
-                row[self.x + 1] = ""
-            self.x += w
-            if self.x >= self.cols:
+        row.invalidate()
+        if s and s.isascii() and not self.wrap_pending and self.x + len(s) <= self.cols:
+            # The common printable run fits on one row. A slice performs the
+            # same cell replacement without a Python iteration per character.
+            end = self.x + len(s)
+            if len(row) < self.x:
+                row.extend(" " * (self.x - len(row)))
+            row[self.x:end] = s
+            self.x = end
+            if end == self.cols:
                 self.x = self.cols - 1
                 self.wrap_pending = True
+        else:
+            for ch in s:
+                if ch in _INVISIBLE:
+                    continue
+                w = cell_width(ch)
+                if w == 0:
+                    if self.x > 0 and self.x <= len(row):
+                        row[self.x - 1] += ch
+                    continue
+                if self.wrap_pending or self.x + w > self.cols:
+                    if self.autowrap:
+                        self.x = 0
+                        self.linefeed()
+                        row = self.grid[self.y]
+                        row.invalidate()
+                        row.wrapped = True
+                    else:
+                        self.x = self.cols - w
+                    self.wrap_pending = False
+                if len(row) < self.x + w:
+                    row.extend(" " * (self.x + w - len(row)))
+                row[self.x] = ch
+                if w == 2:
+                    row[self.x + 1] = ""
+                self.x += w
+                if self.x >= self.cols:
+                    self.x = self.cols - 1
+                    self.wrap_pending = True
         # Programs without synchronized output still need settled frames, but a
         # frame taken inside a synchronized update would be half drawn.
         if self._since_frame >= self.idle_bytes and not self.in_sync:
             self._frame("idle")
 
     # -- erasing -----------------------------------------------------------
-    def _erase(self, row: list[str], start: int, end: int | None) -> None:
+    def _erase(self, row: Row, start: int, end: int | None) -> None:
         end = len(row) if end is None else min(end, len(row))
         if start >= len(row):
             return
+        row.invalidate()
         if end >= len(row):
             del row[start:]
         else:
@@ -261,6 +306,7 @@ class Screen:
         elif mode == 1:
             self._erase(row, 0, self.x + 1)
         elif mode == 2:
+            row.invalidate()
             row.clear()
             row.wrapped = False
 
@@ -348,11 +394,12 @@ class Screen:
             self.top, self.bottom = 0, self.rows - 1
 
     def csi(self, t: bytes) -> None:
+        # Colour and styling do not affect replayed text or pending autowrap.
+        # Skip their parameters, including extended RGB and colon notation.
+        if t[-1] == 0x6D:
+            return
         final = chr(t[-1])
-        body = t[2:-1].decode("latin-1")
-        marker = body[:1] if body[:1] in "?<>=" else ""
-        body = body[len(marker):].rstrip(" !\"#$%&'()*+,-./")
-        params = [int(p) if p.isdigit() else 0 for p in re.split(r"[;:]", body)] if body else []
+        marker, params = _cached_csi(t) if len(t) <= 128 else _parse_csi(t)
 
         def arg(i: int, default: int = 1) -> int:
             return params[i] if len(params) > i and params[i] else default
@@ -404,11 +451,14 @@ class Screen:
             self._erase(self.grid[self.y], self.x, self.x + arg(0))
         elif final == "P":
             self.dirty = True
-            del self.grid[self.y][self.x:self.x + arg(0)]
+            row = self.grid[self.y]
+            row.invalidate()
+            del row[self.x:self.x + arg(0)]
         elif final == "@":
             row = self.grid[self.y]
             if self.x < len(row):
                 self.dirty = True
+                row.invalidate()
                 row[self.x:self.x] = " " * arg(0)
         elif final == "L":
             if self.top <= self.y <= self.bottom:

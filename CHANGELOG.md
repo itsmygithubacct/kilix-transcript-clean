@@ -15,3 +15,6 @@
 - Handles recordings cut by the broker's size limit, broker graphics notes,
   scroll regions, alternate screens, pinned header rows, collapsing tool
   blocks, history browsing and resize reflow.
+- Faster replay of redraw-heavy recordings: reuse unchanged row text, batch
+  ASCII writes, and avoid repeated parsing of style and cursor sequences.
+  Character-width and control-sequence caches have fixed entry limits.
